@@ -1,0 +1,18 @@
+# MCPize deployment configuration
+name: compliance-suite
+entrypoint: server.py
+install: pip install fastmcp
+runtime: python312
+transport: http
+port: 8111
+category: security
+tags:
+  - security
+  - compliance
+  - audit
+  - cis
+  - cve
+  - firewall
+  - ssh
+  - soc2
+description: Self-contained compliance monitoring for AI agents. CIS benchmarks, CVE checks, port scans, firewall audits, SSH audits with cryptographic audit trail.
