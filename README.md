@@ -1,6 +1,6 @@
 # Compliance Suite MCP — Enterprise Audit & Security for AI Agents
 
-**SOC 2-ready compliance monitoring for your infrastructure, accessible through any MCP-compatible AI agent.**
+**Self-contained compliance monitoring. Deploy anywhere — runs natively with zero external dependencies.**
 
 [![MCP](https://img.shields.io/badge/MCP-Compatible-blue)](https://modelcontextprotocol.io)
 [![Python](https://img.shields.io/badge/Python-3.11+-green)](https://python.org)
@@ -8,30 +8,26 @@
 
 ## What It Does
 
-Compliance Suite wraps 14 security auditing tools behind 7 clean MCP endpoints. Your AI agent (Claude, ChatGPT, Gemini) can now run full CIS benchmark scans, check for CVEs, audit firewalls/SSH/ports, generate SOC 2 evidence packages, and maintain a cryptographic audit trail — all from natural language.
+Your AI agent (Claude, ChatGPT, Gemini) can now run complete security audits. One prompt → CIS benchmark scan, CVE check, port audit, firewall audit, SSH audit — all in parallel. Every scan is cryptographically logged in a SHA-256 chained audit trail.
 
-**One prompt → full compliance report.** No SSH, no scattered scripts, no manual evidence compilation.
-
-## Why This Exists
-
-The [2026 MCP Roadmap](https://modelcontextprotocol.io/development/roadmap) explicitly names "Enterprise Readiness" as a priority — audit trails, compliance, SSO, and governance. The Enterprise Working Group hasn't formed yet. This server ships the solution today.
+**No external MCP servers required.** Everything runs natively in this single process.
 
 ## Tools (7)
 
 | Tool | What It Does |
 |------|-------------|
-| `compliance_full_audit` | Runs all 5 audits in parallel: CIS + CVE + ports + firewall + SSH |
-| `compliance_scorecard` | Executive summary — risk level + scores per category |
-| `audit_trail_query` | Cryptographic chain — every action logged, linked, verifiable |
-| `scheduled_scan_diff` | SOC 2 evidence: what changed between scans |
-| `incident_forensic_report` | Post-mortem reports from incident data |
-| `compliance_export` | Export evidence package for auditors |
-| `compliance_status` | Health check: are all compliance subsystems up? |
+| `compliance_full_audit` | 5 parallel scans: CIS benchmark + CVE + ports + firewall + SSH. Returns scored report with fixes. |
+| `compliance_scorecard` | Executive summary — risk level, CIS score, CVE count. JSON, dashboard-ready. |
+| `audit_trail_query` | Cryptographic chain — every action logged, linked via SHA-256, tamper-evident. |
+| `scheduled_scan_diff` | SOC 2 evidence: exactly what changed between scans (improved/degraded). |
+| `incident_forensic_report` | Scan logs for errors, auth failures, suspicious activity. |
+| `compliance_export` | SOC 2 evidence package — scan history + audit trail for auditors. |
+| `compliance_status` | Instant health check — scans stored, trail size, chain integrity. |
 
 ## Quick Start
 
 ```bash
-pip install fastmcp httpx
+pip install fastmcp
 python3 server.py
 # Starts on http://localhost:8111/mcp
 ```
@@ -41,17 +37,18 @@ Connect to Claude Desktop:
 {"mcpServers": {"compliance-suite": {"url": "http://localhost:8111/mcp"}}}
 ```
 
-Then ask: "Run a full compliance audit and give me the scorecard"
+Then ask: *"Run a full compliance audit and tell me if we're secure"*
 
-## Architecture
+## Configuration
 
-```
-Compliance Suite (port 8111)
-  ├── Compliance Auditor (port 8100) — CIS, CVE, port, firewall, SSH
-  └── Incident Forensics (port 8101) — investigations, timeline, root cause
-```
+| Env Var | Default | Description |
+|---------|---------|-------------|
+| `COMPLIANCE_DATA_DIR` | `~/.compliance-suite` | Where audit trail + scan history are stored |
+| `COMPLIANCE_PORT` | `8111` | Server port |
 
-Adds: cryptographic audit trail (SHA-256 chained), SOC 2 evidence export, parallel execution, diff tracking.
+## CIS Checks (8 benchmarks)
+
+Firewall status, security updates, ICMP redirects, source routing, password policy, brute force detection, SELinux, core dump restrictions. Each failure includes exact remediation command.
 
 ## Pricing (on MCPize)
 
@@ -60,14 +57,8 @@ Adds: cryptographic audit trail (SHA-256 chained), SOC 2 evidence export, parall
 | **Free** | $0 | 5 scans/day, summary reports |
 | **Pro** | $19/month | Unlimited scans, detailed reports, audit trail |
 | **Team** | $49/month | Multi-node, SOC 2 export, priority support |
-| **Enterprise** | $149/month | SSO, custom benchmarks, SLA, dedicated support |
-
-*Activate before June 10, 2026 to lock in 85% Founding Member revenue share.*
-
-## Who Needs This
-
-**CISOs** deploying AI agents who need audit trails. **DevOps teams** wanting compliance-as-code. **Startups** pursuing SOC 2 affordably. **MSPs** managing multi-client compliance.
+| **Enterprise** | $149/month | SSO, custom benchmarks, SLA |
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+MIT
