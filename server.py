@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""
-Compliance Suite MCP v2.1 — Self-contained enterprise audit & security for AI agents.
-Runs entirely standalone. No external MCP dependencies. Deploy anywhere.
-Works on Debian/Ubuntu (apt, ufw) and Fedora/RHEL (dnf, firewalld).
-
-7 tools: full_audit, scorecard, audit_trail, scan_diff, forensic_report, export, status
-"""
+"""Compliance Suite MCP v2.2 — Self-contained enterprise audit & security."""
 import asyncio, json, hashlib, os, re, subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -22,10 +16,10 @@ def sign_entry(entry: dict) -> str:
     f = AUDIT_TRAIL_DIR / "chain.jsonl"
     prev = "0"*64
     if f.exists():
-        lines = f.read_text().strip().split("\n")
-        if lines:
-            try: prev = json.loads(lines[-1]).get("hash", prev)
-            except: pass
+        for line in f.read_text().strip().split("\n"):
+            if line:
+                try: prev = json.loads(line).get("hash", prev)
+                except: pass
     entry["timestamp"] = datetime.now().isoformat()
     entry["prev_hash"] = prev
     entry["hash"] = hashlib.sha256(json.dumps(entry, sort_keys=True).encode()).hexdigest()
@@ -35,27 +29,31 @@ def sign_entry(entry: dict) -> str:
 def cmd(c: str, t: int = 15) -> dict:
     try:
         r = subprocess.run(c, shell=True, capture_output=True, text=True, timeout=t)
-        return {"ok": r.returncode==0, "out": r.stdout.strip(), "err": r.stderr.strip(), "code": r.returncode}
-    except: return {"ok": False, "out": "", "err": "timeout", "code": -1}
+        return {"ok": r.returncode==0, "out": r.stdout.strip(), "err": r.stderr.strip()}
+    except: return {"ok": False, "out": "", "err": "timeout"}
 
 def scan_cis():
     c = []
+    # FIXED: exact match for firewall state, not substring
     r = cmd("systemctl is-active firewalld 2>/dev/null || systemctl is-active ufw 2>/dev/null || echo inactive")
-    c.append({"cat":"Firewall","check":"Firewall active","r":"pass" if "active" in r["out"] else "fail","sev":"critical","d":r["out"],"fix":"sudo systemctl enable --now firewalld || sudo ufw enable"})
-    r = cmd("(apt list --upgradable 2>/dev/null | grep -i security | wc -l) || (dnf check-update --security 2>/dev/null | wc -l) || echo 0", 30)
+    fw_up = r["out"].strip() == "active"
+    c.append({"cat":"Firewall","check":"Firewall active","r":"pass" if fw_up else "fail","sev":"critical","d":r["out"],"fix":"systemctl enable --now firewalld || ufw enable"})
+    r = cmd("(apt list --upgradable 2>/dev/null | grep -ci security) || (dnf check-update --security 2>/dev/null | wc -l) || echo 0", 30)
     p = int(r["out"].strip()) if r["out"].strip().isdigit() else 0
-    c.append({"cat":"Updates","check":"Updates current","r":"pass" if p<=1 else "fail","sev":"high","d":f"{max(0,p-1)} pending","fix":"sudo apt upgrade -y || sudo dnf update --security -y"})
+    c.append({"cat":"Updates","check":"Updates current","r":"pass" if p<=1 else "fail","sev":"high","d":f"{max(0,p-1)} pending","fix":"apt upgrade -y || dnf update --security -y"})
     r = cmd("sysctl net.ipv4.conf.all.accept_redirects 2>/dev/null | awk '{print $3}'")
     c.append({"cat":"Kernel","check":"ICMP redirects","r":"pass" if r["out"]=="0" else "fail","sev":"high","d":r["out"],"fix":"sysctl net.ipv4.conf.all.accept_redirects=0"})
     r = cmd("sysctl net.ipv4.conf.all.accept_source_route 2>/dev/null | awk '{print $3}'")
     c.append({"cat":"Kernel","check":"Source routing","r":"pass" if r["out"]=="0" else "fail","sev":"high","d":r["out"],"fix":"sysctl net.ipv4.conf.all.accept_source_route=0"})
+    # FIXED: PASS_MAX_DAYS 99999 is weak, flag as fail
     r = cmd("grep -E '^PASS_MAX_DAYS|^PASS_MIN_LEN' /etc/login.defs 2>/dev/null || echo none")
-    c.append({"cat":"Auth","check":"Password policy","r":"pass" if "PASS_MAX_DAYS" in r["out"] else "fail","sev":"med","d":r["out"][:200],"fix":"Configure /etc/login.defs"})
+    pw_ok = "PASS_MAX_DAYS" in r["out"] and "99999" not in r["out"]
+    c.append({"cat":"Auth","check":"Password policy","r":"pass" if pw_ok else "fail","sev":"med","d":r["out"][:200],"fix":"Set PASS_MAX_DAYS 90 in /etc/login.defs"})
     r = cmd("journalctl -u sshd --since '24h ago' 2>/dev/null | grep -ci failed || echo 0")
     f = int(r["out"].strip()) if r["out"].strip().isdigit() else 0
-    c.append({"cat":"Auth","check":"Brute force","r":"pass" if f<10 else "fail","sev":"high","d":f"{f} failed logins","fix":"sudo apt install fail2ban -y || sudo dnf install fail2ban -y"})
-    r = cmd("getenforce 2>/dev/null || echo Disabled")
-    c.append({"cat":"Access","check":"SELinux/AppArmor","r":"pass" if "Enforcing" in r["out"] else "fail","sev":"high","d":r["out"],"fix":"sudo setenforce 1 || sudo aa-enforce /etc/apparmor.d/*"})
+    c.append({"cat":"Auth","check":"Brute force","r":"pass" if f<10 else "fail","sev":"high","d":f"{f} failed logins","fix":"apt install fail2ban -y || dnf install fail2ban -y"})
+    r = cmd("(getenforce 2>/dev/null) || (aa-status --enabled 2>/dev/null && echo Enforcing) || echo Disabled")
+    c.append({"cat":"Access","check":"SELinux/AppArmor","r":"pass" if "Enforcing" in r["out"] else "fail","sev":"high","d":r["out"][:80],"fix":"setenforce 1 || aa-enforce /etc/apparmor.d/*"})
     r = cmd("sysctl fs.suid_dumpable 2>/dev/null | awk '{print $3}'")
     c.append({"cat":"Kernel","check":"Core dumps","r":"pass" if r["out"]=="0" else "fail","sev":"med","d":r["out"],"fix":"sysctl fs.suid_dumpable=0"})
     passed = sum(1 for x in c if x["r"]=="pass")
@@ -66,8 +64,7 @@ def scan_cve():
     cves = []
     for line in r["out"].split("\n"):
         if "CVE-" in line.upper():
-            parts = line.split()
-            for p in parts:
+            for p in line.split():
                 if "CVE-" in p.upper(): cves.append({"id": p, "sev": "?"}); break
     return {"found": len(cves), "cves": cves}
 
@@ -92,15 +89,14 @@ def scan_ports():
 
 def scan_fw():
     r = cmd("(firewall-cmd --state 2>/dev/null) || (ufw status 2>/dev/null | grep -q active && echo running) || echo 'not running'")
-    a = "running" in r["out"].lower()
+    a = r["out"].strip() == "running"
     d = {"active": a}
-    if a:
-        d["svc"] = cmd("(firewall-cmd --list-services 2>/dev/null) || (ufw status 2>/dev/null)")["out"]
+    if a: d["svc"] = cmd("(firewall-cmd --list-services 2>/dev/null) || (ufw status 2>/dev/null)")["out"]
     return {"active": a, "details": d}
 
 def scan_ssh():
     r = cmd("systemctl is-active sshd 2>/dev/null || echo inactive")
-    a = "active" in r["out"]
+    a = r["out"].strip() == "active"
     cfg = ""
     for p in ["/etc/ssh/sshd_config","/etc/ssh/ssh_config"]:
         try: cfg = Path(p).read_text(); break
@@ -119,23 +115,24 @@ def scan_incidents():
 
 @mcp.tool()
 async def compliance_full_audit(benchmark: str = "cis_level1") -> str:
-    """Run complete 5-part compliance audit: CIS benchmark + CVE + ports + firewall + SSH. Returns scored report with fixes."""
+    """Run complete 5-part compliance audit: CIS benchmark + CVE + ports + firewall + SSH. Returns scored report with fix commands."""
     loop = asyncio.get_event_loop()
     tasks = [loop.run_in_executor(None, f) for f in [scan_cis, scan_cve, scan_ports, scan_fw, scan_ssh]]
     names = ["cis","cve","ports","fw","ssh"]
     results = dict(zip(names, await asyncio.gather(*tasks)))
     entry = {"action":"full_audit","benchmark":benchmark,"summary":{"cis":results["cis"]["score"],"cves":results["cve"]["found"],"ports":results["ports"]["total"],"fw":results["fw"]["active"],"ssh":results["ssh"]["active"]}}
     h = sign_entry(entry)
-    rpt = f"=== COMPLIANCE AUDIT REPORT ===\nAudit Trail: {h[:16]}...\nTime: {datetime.now().isoformat()}\n\nCIS: {results['cis']['score']}% ({results['cis']['passed']}/{results['cis']['total']}) | CVEs: {results['cve']['found']} | Ports: {results['ports']['total']} | FW: {'ON' if results['fw']['active'] else 'OFF'}\n\n--- FINDINGS ---\n"
+    rpt = f"=== COMPLIANCE AUDIT REPORT ===\nAudit Trail: {h[:16]}...\nTime: {datetime.now().isoformat()}\n\nScores: CIS {results['cis']['score']}% ({results['cis']['passed']}/{results['cis']['total']}) | CVEs: {results['cve']['found']} | Ports: {results['ports']['total']} open | FW: {'ACTIVE' if results['fw']['active'] else 'INACTIVE'}\n\n--- KEY FINDINGS ---\n"
     for f in results["cis"]["findings"]:
         rpt += f"  {'✓' if f['r']=='pass' else '✗'} [{f['sev'].upper()}] {f['check']}: {f.get('d','')}\n"
         if f['r']=='fail' and 'fix' in f: rpt += f"    Fix: {f['fix']}\n"
     if results["cve"]["found"]: rpt += f"\n--- CVEs ({results['cve']['found']}) ---\n"
     for cve in results["cve"]["cves"][:10]: rpt += f"  {cve['id']} [{cve['sev']}]\n"
-    rpt += f"\n--- PORTS ({results['ports']['total']}) ---\n"
+    rpt += f"\n--- PORTS ({results['ports']['total']} open) ---\n"
     for f in results["ports"]["findings"]: rpt += f"  [{f['risk'].upper()}] {f['port']}:{f['proc']}\n"
+    if not results["ports"]["findings"]: rpt += "  ✓ No risky ports exposed\n"
     rpt += "\n--- SSH ---\n"
-    for i in results["ssh"]["issues"]: rpt += f"  {'✓' if i['r']=='pass' else '✗'} {i['check']}\n"
+    for i in results["ssh"]["issues"]: rpt += f"  {'✓' if i['r']=='pass' else '✗'} {i['check']}: {i.get('d','OK')}\n"
     sf = SCAN_HISTORY_DIR / f"scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     sf.write_text(json.dumps({"report":rpt,"results":{k:v for k,v in results.items()},"trail":entry}, indent=2, default=str))
     return rpt
@@ -154,7 +151,7 @@ async def compliance_scorecard() -> str:
 
 @mcp.tool()
 async def audit_trail_query(hours: int = 24, action: str = "") -> str:
-    """Query cryptographic audit trail — every action logged, linked, verifiable."""
+    """Query cryptographic audit trail with chain integrity verification."""
     f = AUDIT_TRAIL_DIR / "chain.jsonl"
     if not f.exists(): return "No entries yet. Run compliance_full_audit."
     cut = datetime.now() - timedelta(hours=hours)
@@ -249,8 +246,8 @@ async def compliance_status() -> str:
                 prev = e.get("hash","")
             except: ok = False; break
     fw = cmd("(firewall-cmd --state 2>/dev/null) || (ufw status 2>/dev/null | grep -q active && echo running) || echo inactive")
-    return json.dumps({"status":"OPERATIONAL","scans":len(list(SCAN_HISTORY_DIR.glob("scan_*.json"))),"trail":tc,"chain":"VALID" if ok else "BROKEN","fw":"ON" if "running" in fw["out"].lower() else "OFF","ts":datetime.now().isoformat()}, indent=2)
+    return json.dumps({"status":"OPERATIONAL","scans":len(list(SCAN_HISTORY_DIR.glob("scan_*.json"))),"trail":tc,"chain":"VALID" if ok else "BROKEN","fw":"ON" if fw["out"].strip()=="running" else "OFF","ts":datetime.now().isoformat()}, indent=2)
 
 if __name__ == "__main__":
-    print(f"Compliance Suite MCP v2.1 — Port {PORT}")
+    print(f"Compliance Suite MCP v2.2 — Port {PORT}")
     mcp.run(transport="streamable-http")
