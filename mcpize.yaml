@@ -2,9 +2,9 @@
 name: compliance-suite
 entrypoint: server.py
 install: pip install fastmcp
-runtime: python312
+runtime: python
 transport: http
-port: 8111
+port: 8080
 category: security
 tags:
   - security
